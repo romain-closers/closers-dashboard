@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Closers Dashboard</title>
+  <link rel="stylesheet" href="assets/css/styles.css">
+</head>
+<body>
+  <header class="header">
+    <div class="brand">
+      <h1>Closers Dashboard</h1>
+    </div>
+  </header>
+
+  <div class="container">
+    <div id="loader" class="loader">Identification…</div>
+    <div id="content" style="display:none">
+      <div class="card">
+        <h2>Bienvenue</h2>
+        <p id="welcome"></p>
+        <div id="links"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="assets/js/api.js"></script>
+  <script src="assets/js/auth.js"></script>
+  <script>
+    (function() {
+      var loader = document.getElementById("loader");
+      var content = document.getElementById("content");
+
+      CLOSERS_AUTH.getCurrentRole().then(function(info) {
+        loader.style.display = "none";
+        content.style.display = "block";
+        var welcome = document.getElementById("welcome");
+        var links = document.getElementById("links");
+
+        if (info.kind === "client") {
+          welcome.textContent = "Vue client : " + info.clientName;
+          links.innerHTML = '<p><a href="client.html?token=' + (CLOSERS_AUTH.getTokenFromUrl() || "") + '">→ Voir le dashboard de votre équipe</a></p>';
+          return;
+        }
+
+        if (info.kind === "internal") {
+          welcome.textContent = "Bonjour " + (info.displayName || info.email) + " (" + info.role + ")";
+          var html = "";
+          if (info.role === "board") {
+            html += '<p><a href="board.html">→ Dashboard Board (rentabilité, marges)</a></p>';
+          }
+          if (info.role === "board" || info.role === "management") {
+            html += '<p><a href="management.html">→ Dashboard Management (équipes, closers)</a></p>';
+          }
+          links.innerHTML = html;
+          return;
+        }
+
+        welcome.textContent = "Vous n'êtes pas autorisé à accéder à ce dashboard. Si vous êtes un client, vérifiez votre lien d'accès. Sinon contactez Romain.";
+      }).catch(function(err) {
+        loader.innerHTML = '<div class="error-banner">Erreur : ' + err.message + '</div>';
+      });
+    })();
+  </script>
+</body>
+</html>

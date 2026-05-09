@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Board — Closers Dashboard</title>
+  <link rel="stylesheet" href="assets/css/styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header class="header">
+    <div class="brand"><h1>Board — Rentabilité & Alertes</h1></div>
+    <div class="user" id="user-info">…</div>
+  </header>
+
+  <div class="container">
+    <div id="period-bar"></div>
+    <div id="alerts" class="alerts"></div>
+    <div id="kpis" class="kpi-grid"></div>
+    <div class="card">
+      <h2>Rentabilité par client</h2>
+      <div id="client-table"></div>
+    </div>
+    <div class="row">
+      <div class="col card">
+        <h2>Évolution VA — 12 derniers mois</h2>
+        <div class="chart-container"><canvas id="evolution-chart"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="assets/js/api.js"></script>
+  <script src="assets/js/auth.js"></script>
+  <script src="assets/js/render.js"></script>
+  <script src="assets/js/charts.js"></script>
+  <script>
+    (function() {
+      var R = CLOSERS_RENDER;
+      var elKpis    = document.getElementById("kpis");
+      var elAlerts  = document.getElementById("alerts");
+      var elTable   = document.getElementById("client-table");
+      var elPeriod  = document.getElementById("period-bar");
+      var elUser    = document.getElementById("user-info");
+      var evoChart  = null;
+
+      CLOSERS_AUTH.requireRole(["board"]).then(function(info) {
+        elUser.textContent = info.displayName || info.email;
+        var current = R.periodBar(elPeriod, "month");
+        elPeriod.addEventListener("periodchange", function(e) { reload(e.detail); });
+        reload(current);
+      }).catch(function(err) {
+        document.querySelector(".container").innerHTML = '<div class="error-banner">Accès refusé : ' + err.message + '</div>';
+      });
+
+      function reload(period) {
+        R.showLoader(elKpis);
+        elTable.innerHTML = ""; elAlerts.innerHTML = "";
+
+        CLOSERS_API.board(period).then(function(data) {
+          renderKpis(data);
+          renderAlerts(data);
+          renderTable(data);
+          renderEvolution(data);
+        }).catch(function(err) {
+          R.showError(elKpis, "Erreur chargement Board : " + err.message);
+        });
+      }
+
+      function renderKpis(d) {
+        elKpis.innerHTML = "";
+        elKpis.appendChild(R.kpiCard({ label: "VA Total",      value: d.totals.va,             formatter: R.fmtMoney }));
+        elKpis.appendChild(R.kpiCard({ label: "CA Closers",    value: d.totals.ca,             formatter: R.fmtMoney }));
+        elKpis.appendChild(R.kpiCard({ label: "Closes",        value: d.totals.closes }));
+        elKpis.appendChild(R.kpiCard({ label: "Clients actifs",value: d.totals.activeClients }));
+        elKpis.appendChild(R.kpiCard({ label: "Closers alloués",value: d.totals.totalClosers }));
+      }
+
+      function renderAlerts(d) {
+        if (!d.alerts || d.alerts.length === 0) return;
+        elAlerts.innerHTML = "";
+        d.alerts.forEach(function(a) {
+          var msg = "⚠ " + a.client + " — CA/closer " + R.fmtMoney(a.value) + " (seuil " + R.fmtMoney(a.threshold) + ")";
+          elAlerts.appendChild(R.el("div", { class: "alert-banner" }, [msg]));
+        });
+      }
+
+      function renderTable(d) {
+        var t = R.table(
+          [
+            { key: "client", label: "Client" },
+            { key: "actif",  label: "Statut", formatter: function(v) { return v ? "Actif" : "Stand-by"; } },
+            { key: "va",     label: "VA",      formatter: R.fmtMoney, classCol: "num" },
+            { key: "ca",     label: "CA",      formatter: R.fmtMoney, classCol: "num" },
+            { key: "closes", label: "Closes",  formatter: R.fmtNumber, classCol: "num" },
+            { key: "nbClosers", label: "Closers", formatter: R.fmtNumber, classCol: "num" },
+            { key: "caPerCloser", label: "CA / closer", formatter: R.fmtMoney, classCol: "num" }
+          ],
+          d.clientRows,
+          { rowClass: function(r) { return r.alertCaPerCloser ? "row-alert" : ""; } }
+        );
+        elTable.innerHTML = "";
+        elTable.appendChild(t);
+      }
+
+      function renderEvolution(d) {
+        var labels = d.evolution.map(function(e) { return e.month; });
+        var values = d.evolution.map(function(e) { return e.va; });
+        if (evoChart) evoChart.destroy();
+        evoChart = CLOSERS_CHARTS.line(
+          document.getElementById("evolution-chart"),
+          labels,
+          [{ label: "VA", data: values, color: "#1F3864" }]
+        );
+      }
+    })();
+  </script>
+</body>
+</html>

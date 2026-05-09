@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Management — Closers Dashboard</title>
+  <link rel="stylesheet" href="assets/css/styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header class="header">
+    <div class="brand"><h1>Management — Performance Équipes</h1></div>
+    <div class="user" id="user-info">…</div>
+  </header>
+
+  <div class="container">
+    <div id="period-bar"></div>
+    <div id="kpis" class="kpi-grid"></div>
+    <div class="row">
+      <div class="col card">
+        <h2>Sources des closes</h2>
+        <div class="chart-container"><canvas id="source-chart"></canvas></div>
+      </div>
+      <div class="col card">
+        <h2>Top objections</h2>
+        <div id="objections-table"></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Performance par closer</h2>
+      <div id="closer-table"></div>
+    </div>
+  </div>
+
+  <script src="assets/js/api.js"></script>
+  <script src="assets/js/auth.js"></script>
+  <script src="assets/js/render.js"></script>
+  <script src="assets/js/charts.js"></script>
+  <script>
+    (function() {
+      var R = CLOSERS_RENDER;
+      var elKpis    = document.getElementById("kpis");
+      var elPeriod  = document.getElementById("period-bar");
+      var elUser    = document.getElementById("user-info");
+      var elObj     = document.getElementById("objections-table");
+      var elCloser  = document.getElementById("closer-table");
+      var sourceChart = null;
+
+      CLOSERS_AUTH.requireRole(["board", "management"]).then(function(info) {
+        elUser.textContent = (info.displayName || info.email) + " (" + info.role + ")";
+        var current = R.periodBar(elPeriod, "month");
+        elPeriod.addEventListener("periodchange", function(e) { reload(e.detail); });
+        reload(current);
+      }).catch(function(err) {
+        document.querySelector(".container").innerHTML = '<div class="error-banner">Accès refusé : ' + err.message + '</div>';
+      });
+
+      function reload(period) {
+        R.showLoader(elKpis);
+        elObj.innerHTML = ""; elCloser.innerHTML = "";
+        CLOSERS_API.management(period).then(function(d) {
+          renderKpis(d);
+          renderObjections(d);
+          renderClosers(d);
+          renderSourceSplit(d);
+        }).catch(function(err) {
+          R.showError(elKpis, "Erreur : " + err.message);
+        });
+      }
+
+      function renderKpis(d) {
+        var k = d.kpis;
+        elKpis.innerHTML = "";
+        var make = function(label, kpi, fmt) {
+          return R.kpiCard({ label: label, value: kpi.value, delta: kpi.delta, formatter: fmt || R.fmtNumber });
+        };
+        elKpis.appendChild(make("RDV planifiés",    k.rdvPlanifies));
+        elKpis.appendChild(make("Absences",          k.absences));
+        elKpis.appendChild(make("Entretiens",        k.entretiens));
+        elKpis.appendChild(make("Ventes",            k.ventes));
+        elKpis.appendChild(make("Taux de closing",   k.tauxClosing, R.fmtPercent));
+        elKpis.appendChild(make("Taux joignabilité", k.tauxJoignabilite, R.fmtPercent));
+        elKpis.appendChild(make("R2 positionnés",    k.r2Positionnes));
+        elKpis.appendChild(make("Non qualifiés",     k.nonQualifies));
+        elKpis.appendChild(make("Perdus / Follow-up",k.perdus));
+        elKpis.appendChild(make("VA",                k.va, R.fmtMoney));
+      }
+
+      function renderObjections(d) {
+        var rows = (d.kpis.objections && d.kpis.objections.length) ? d.kpis.objections : [];
+        // fallback : si on a passé via aggregate, on lit objections au top niveau
+        if (!rows.length && d.objections) rows = d.objections;
+        var t = R.table(
+          [{ key: "label", label: "Objection" }, { key: "count", label: "Occurrences", classCol: "num" }],
+          rows
+        );
+        elObj.innerHTML = ""; elObj.appendChild(t);
+      }
+
+      function renderClosers(d) {
+        var t = R.table(
+          [
+            { key: "closer", label: "Closer" },
+            { key: "client", label: "Client" },
+            { key: "rdvPlanifies", label: "RDV", formatter: R.fmtNumber, classCol: "num" },
+            { key: "entretiens",   label: "Entretiens", formatter: R.fmtNumber, classCol: "num" },
+            { key: "ventes",       label: "Ventes", formatter: R.fmtNumber, classCol: "num" },
+            { key: "tauxClosing",  label: "Tx closing", formatter: R.fmtPercent, classCol: "num" },
+            { key: "va",           label: "VA", formatter: R.fmtMoney, classCol: "num" },
+            { key: "delta",        label: "Δ vs période", formatter: function(v) {
+              var d = R.fmtDelta(v); return '<span class="' + d.cls + '">' + d.text + '</span>';
+            }, html: true, classCol: "num" }
+          ],
+          d.closerRows
+        );
+        elCloser.innerHTML = ""; elCloser.appendChild(t);
+      }
+
+      function renderSourceSplit(d) {
+        var s = d.sourceSplit || { DIRECT: 0, SETTING: 0, REINSCRIPTION: 0 };
+        var labels = ["DIRECT", "SETTING", "REINSCRIPTION"];
+        var values = labels.map(function(l) { return s[l] || 0; });
+        if (sourceChart) sourceChart.destroy();
+        sourceChart = CLOSERS_CHARTS.donut(
+          document.getElementById("source-chart"),
+          { labels: labels, values: values }
+        );
+      }
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard — Closers Group</title>
+  <link rel="stylesheet" href="assets/css/styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header class="header header-client">
+    <div class="logos">
+      <span style="font-weight:700;font-size:18px;color:#1F3864">CLOSERS GROUP</span>
+      <span id="client-name" style="font-size:14px;color:#6B7280"></span>
+    </div>
+    <div class="user" style="color:#6B7280">Vue Client</div>
+  </header>
+
+  <div class="container">
+    <div id="period-bar"></div>
+    <div id="kpis-funnel" class="kpi-grid"></div>
+    <div id="kpis-financial" class="kpi-grid"></div>
+    <div class="row">
+      <div class="col card">
+        <h2>Sources des closes</h2>
+        <div class="chart-container"><canvas id="source-chart"></canvas></div>
+      </div>
+      <div class="col card">
+        <h2>Principales objections</h2>
+        <div id="objections-table"></div>
+      </div>
+      <div class="col card">
+        <h2>Raisons des non-closes</h2>
+        <div id="raisons-table"></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Closes du mois</h2>
+      <div id="closes-table"></div>
+    </div>
+  </div>
+
+  <script src="assets/js/api.js"></script>
+  <script src="assets/js/auth.js"></script>
+  <script src="assets/js/render.js"></script>
+  <script src="assets/js/charts.js"></script>
+  <script>
+    (function() {
+      var R = CLOSERS_RENDER;
+      var token = CLOSERS_AUTH.getTokenFromUrl();
+      if (!token) {
+        document.querySelector(".container").innerHTML = '<div class="error-banner">Accès refusé : token manquant. Vérifiez votre lien.</div>';
+        return;
+      }
+
+      var elClient   = document.getElementById("client-name");
+      var elFunnel   = document.getElementById("kpis-funnel");
+      var elFin      = document.getElementById("kpis-financial");
+      var elPeriod   = document.getElementById("period-bar");
+      var elObj      = document.getElementById("objections-table");
+      var elRaisons  = document.getElementById("raisons-table");
+      var elCloses   = document.getElementById("closes-table");
+      var sourceChart = null;
+
+      var current = R.periodBar(elPeriod, "month");
+      elPeriod.addEventListener("periodchange", function(e) { reload(e.detail); });
+      reload(current);
+
+      function reload(period) {
+        R.showLoader(elFunnel);
+        elFin.innerHTML = ""; elObj.innerHTML = ""; elRaisons.innerHTML = ""; elCloses.innerHTML = "";
+
+        CLOSERS_API.client(token, period).then(function(d) {
+          elClient.textContent = "— " + d.client;
+          renderFunnel(d.kpis);
+          renderFinancial(d.kpis, d.pipelineEnCours);
+          renderObjections(d.objections);
+          renderRaisons(d.raisonsNonClose);
+          renderCloses(d.closesTable);
+          renderSourceSplit(d.sourceSplit);
+        }).catch(function(err) {
+          if (err.message.indexOf("Token") !== -1) {
+            document.querySelector(".container").innerHTML = '<div class="error-banner">Accès refusé : ' + err.message + '</div>';
+          } else {
+            R.showError(elFunnel, "Erreur : " + err.message);
+          }
+        });
+      }
+
+      function make(label, kpi, fmt) {
+        return R.kpiCard({ label: label, value: kpi.value, delta: kpi.delta, formatter: fmt || R.fmtNumber });
+      }
+
+      function renderFunnel(k) {
+        elFunnel.innerHTML = "";
+        elFunnel.appendChild(make("RDV planifiés",      k.rdvPlanifies));
+        elFunnel.appendChild(make("Absences",            k.absences));
+        elFunnel.appendChild(make("Entretiens réalisés", k.entretiens));
+        elFunnel.appendChild(make("Ventes réalisées",    k.ventes));
+        elFunnel.appendChild(make("R2 positionnés",      k.r2Positionnes));
+        elFunnel.appendChild(make("Non qualifiés",       k.nonQualifies));
+        elFunnel.appendChild(make("Perdus / Follow-up",  k.perdus));
+      }
+
+      function renderFinancial(k, pipelineEnCours) {
+        elFin.innerHTML = "";
+        elFin.appendChild(make("VA généré",          k.va,              R.fmtMoney));
+        elFin.appendChild(make("Taux de closing",    k.tauxClosing,     R.fmtPercent));
+        elFin.appendChild(make("Taux joignabilité",  k.tauxJoignabilite, R.fmtPercent));
+        elFin.appendChild(R.kpiCard({ label: "Pipeline en cours", value: pipelineEnCours }));
+      }
+
+      function renderObjections(rows) {
+        var t = R.table(
+          [{ key: "label", label: "Objection" }, { key: "count", label: "Occurrences", classCol: "num" }],
+          rows
+        );
+        elObj.innerHTML = ""; elObj.appendChild(t);
+      }
+
+      function renderRaisons(rows) {
+        var t = R.table(
+          [{ key: "label", label: "Raison" }, { key: "count", label: "Occurrences", classCol: "num" }],
+          rows
+        );
+        elRaisons.innerHTML = ""; elRaisons.appendChild(t);
+      }
+
+      function renderCloses(rows) {
+        var t = R.table(
+          [
+            { key: "date",    label: "Date" },
+            { key: "closer",  label: "Closer" },
+            { key: "setter",  label: "Setter" },
+            { key: "source",  label: "Source", formatter: R.sourceBadge, html: true },
+            { key: "montant", label: "Montant", formatter: R.fmtMoney, classCol: "num" }
+          ],
+          rows
+        );
+        elCloses.innerHTML = ""; elCloses.appendChild(t);
+      }
+
+      function renderSourceSplit(s) {
+        s = s || { DIRECT: 0, SETTING: 0, REINSCRIPTION: 0 };
+        var labels = ["DIRECT", "SETTING", "REINSCRIPTION"];
+        var values = labels.map(function(l) { return s[l] || 0; });
+        if (sourceChart) sourceChart.destroy();
+        sourceChart = CLOSERS_CHARTS.donut(
+          document.getElementById("source-chart"),
+          { labels: labels, values: values }
+        );
+      }
+    })();
+  </script>
+</body>
+</html>
