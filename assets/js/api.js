@@ -1,87 +1,70 @@
 /* ============================================================
-   API CLIENT — wrapper JSONP vers le GAS Web App
-   Utilise JSONP au lieu de fetch() pour bypasser CORS sur Apps Script.
+   AUTH — gestion du token (interne ou client)
+
+   Le token vient soit :
+   - de l'URL (?token=XXX) à la 1ère visite via magic link
+   - du localStorage aux visites suivantes (persisté entre sessions)
+
+   Le serveur résout le rôle (interne board/management ou client) à
+   partir du même token via whoami.
    ============================================================ */
 
-window.CLOSERS_API = (function() {
+window.CLOSERS_AUTH = (function() {
 
-  var GAS_URL_INTERNAL = "https://script.google.com/macros/s/AKfycbzDt5qGGzQR2L9sD73VWPZ2ydiS2PUCH_G3_F3D4zRL7Fihzlu0gKHqFHz3EZtXwXrZ6w/exec";
-  var GAS_URL_CLIENT   = "https://script.google.com/macros/s/AKfycbxre2CyT59AmZ_h4aR7t1uVtEScs7-i-FMvkvxozEt1mvrCB9BMdnbkdDZT2ROTJbM2eg/exec";
+  var TOKEN_STORAGE_KEY = "closers_token";
 
-  var JSONP_TIMEOUT_MS = 30000;
+  function getTokenFromUrl() {
+    var params = new URLSearchParams(window.location.search);
+    return params.get("token");
+  }
 
-  function call(baseUrl, params) {
-    return new Promise(function(resolve, reject) {
-      var cbName = "_jsonp_" + Date.now() + "_" + Math.floor(Math.random() * 1000000);
-      var qs = Object.keys(params)
-        .filter(function(k) { return params[k] !== undefined && params[k] !== null && params[k] !== ""; })
-        .map(function(k) { return encodeURIComponent(k) + "=" + encodeURIComponent(params[k]); })
-        .join("&");
-      var url = baseUrl + "?" + qs + (qs ? "&" : "") + "callback=" + cbName;
+  /**
+   * Retourne le token actif, en privilégiant l'URL puis le localStorage.
+   * Si le token vient de l'URL, on le persiste dans localStorage et on le
+   * retire de l'URL pour ne pas l'exposer dans l'historique du navigateur.
+   */
+  function getToken() {
+    var urlToken = getTokenFromUrl();
+    if (urlToken) {
+      try { localStorage.setItem(TOKEN_STORAGE_KEY, urlToken); } catch (e) {}
+      // Nettoyer l'URL (sans recharger la page)
+      try {
+        var newUrl = window.location.pathname + window.location.hash;
+        window.history.replaceState({}, document.title, newUrl);
+      } catch (e) {}
+      return urlToken;
+    }
+    try { return localStorage.getItem(TOKEN_STORAGE_KEY) || ""; } catch (e) { return ""; }
+  }
 
-      var script = document.createElement("script");
-      var timeoutId;
+  function clearToken() {
+    try { localStorage.removeItem(TOKEN_STORAGE_KEY); } catch (e) {}
+  }
 
-      function cleanup() {
-        clearTimeout(timeoutId);
-        if (window[cbName]) delete window[cbName];
-        if (script.parentNode) script.parentNode.removeChild(script);
-      }
+  function isClientView() {
+    return !!getTokenFromUrl() || !!localStorage.getItem(TOKEN_STORAGE_KEY);
+  }
 
-      window[cbName] = function(json) {
-        cleanup();
-        if (!json || !json.ok) {
-          reject(new Error((json && json.error) || "Erreur inconnue"));
-        } else {
-          resolve(json.data);
-        }
-      };
-
-      script.onerror = function() {
-        cleanup();
-        reject(new Error("Erreur réseau — impossible de joindre l'API"));
-      };
-
-      timeoutId = setTimeout(function() {
-        cleanup();
-        reject(new Error("Timeout — l'API n'a pas répondu dans les temps"));
-      }, JSONP_TIMEOUT_MS);
-
-      script.src = url;
-      document.body.appendChild(script);
+  function getCurrentRole() {
+    return CLOSERS_API.whoami(getToken()).then(function(info) {
+      return info; // { kind: "internal|client|anonymous", role?, displayName?, clientName? }
     });
   }
 
-  function getAuthToken() {
-    // Lecture directe pour éviter une dépendance circulaire avec auth.js
-    try {
-      return new URLSearchParams(window.location.search).get("token")
-          || localStorage.getItem("closers_token")
-          || "";
-    } catch (e) { return ""; }
+  function requireRole(allowedRoles) {
+    return getCurrentRole().then(function(info) {
+      if (info.kind === "client") return info;
+      if (info.kind === "internal" && allowedRoles.indexOf(info.role) !== -1) return info;
+      throw new Error("Accès refusé pour " + (info.role || info.kind));
+    });
   }
 
   return {
-    health: function() {
-      return call(GAS_URL_INTERNAL, { action: "health" });
-    },
-    whoami: function(token) {
-      // whoami accepte un token explicite OU récupère celui en cours
-      var t = token || getAuthToken();
-      // On tente d'abord sur l'URL interne (gère internes ET fallback client si token client)
-      // Mais comme les 2 web apps partagent le code, on peut aussi tenter la track client.
-      // Pour simplifier : si le token résout en interne via Track A → ok
-      // Sinon le frontend retombe sur Track B (vue client).
-      return call(GAS_URL_INTERNAL, { action: "whoami", token: t });
-    },
-    board: function(params) {
-      return call(GAS_URL_INTERNAL, Object.assign({ action: "board", token: getAuthToken() }, params || {}));
-    },
-    management: function(params) {
-      return call(GAS_URL_INTERNAL, Object.assign({ action: "management", token: getAuthToken() }, params || {}));
-    },
-    client: function(token, params) {
-      return call(GAS_URL_CLIENT, Object.assign({ action: "client", token: token || getAuthToken() }, params || {}));
-    }
+    getToken: getToken,
+    getTokenFromUrl: getTokenFromUrl,
+    clearToken: clearToken,
+    isClientView: isClientView,
+    getCurrentRole: getCurrentRole,
+    requireRole: requireRole
   };
 })();
