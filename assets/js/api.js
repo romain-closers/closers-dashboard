@@ -52,22 +52,36 @@ window.CLOSERS_API = (function() {
     });
   }
 
+  function getAuthToken() {
+    // Lecture directe pour éviter une dépendance circulaire avec auth.js
+    try {
+      return new URLSearchParams(window.location.search).get("token")
+          || localStorage.getItem("closers_token")
+          || "";
+    } catch (e) { return ""; }
+  }
+
   return {
     health: function() {
       return call(GAS_URL_INTERNAL, { action: "health" });
     },
     whoami: function(token) {
-      var url = token ? GAS_URL_CLIENT : GAS_URL_INTERNAL;
-      return call(url, { action: "whoami", token: token || "" });
+      // whoami accepte un token explicite OU récupère celui en cours
+      var t = token || getAuthToken();
+      // On tente d'abord sur l'URL interne (gère internes ET fallback client si token client)
+      // Mais comme les 2 web apps partagent le code, on peut aussi tenter la track client.
+      // Pour simplifier : si le token résout en interne via Track A → ok
+      // Sinon le frontend retombe sur Track B (vue client).
+      return call(GAS_URL_INTERNAL, { action: "whoami", token: t });
     },
     board: function(params) {
-      return call(GAS_URL_INTERNAL, Object.assign({ action: "board" }, params || {}));
+      return call(GAS_URL_INTERNAL, Object.assign({ action: "board", token: getAuthToken() }, params || {}));
     },
     management: function(params) {
-      return call(GAS_URL_INTERNAL, Object.assign({ action: "management" }, params || {}));
+      return call(GAS_URL_INTERNAL, Object.assign({ action: "management", token: getAuthToken() }, params || {}));
     },
     client: function(token, params) {
-      return call(GAS_URL_CLIENT, Object.assign({ action: "client", token: token }, params || {}));
+      return call(GAS_URL_CLIENT, Object.assign({ action: "client", token: token || getAuthToken() }, params || {}));
     }
   };
 })();
